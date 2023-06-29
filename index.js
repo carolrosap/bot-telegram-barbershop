@@ -4,7 +4,15 @@ const axios = require("axios");
 
 let chatStates = {};
 let servicos = [];
-let sendObjectAPI = { nivel2: "barba", nivel3: "barbeiro2" };
+let professionals = [];
+let schedules = []
+let sendObjectAPI  = {
+  schedule_id: null,
+  service_id: null, 
+  user_id: null
+}
+
+let datas = {}
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
@@ -108,6 +116,9 @@ bot.on("message", async (msg) => {
       if (valida.exists) {
         saudacao(chatId, valida.data.name);
         chatStates[chatId] = 1;
+        const user_id = valida.data.id;
+        datas[chatId].sendObjectAPI.user_id = user_id;
+        console.log(datas[chatId]);
       } else {
         return registerUser(msg, chatId);
       }
@@ -130,11 +141,18 @@ bot.on("contact", async (msg) => {
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+  if(datas[chatId] === undefined) {
+    datas[chatId] = {sendObjectAPI, professional_id: null};
+  }
+
   try {
     const response = await validaUser(chatId);
     if (response.exists) {
       saudacao(chatId, response.data.name);
       chatStates[chatId] = 1;
+      const user_id = response.data.id;
+      datas[chatId].sendObjectAPI.user_id = user_id;
+      console.log(datas[chatId]);
     } else {
       bot.sendMessage(
         chatId,
@@ -189,13 +207,12 @@ async function handleState1(msg, chatId) {
 }
 
 async function handleState2(msg, chatId) {
-  sendObjectAPI.nivel2 = msg.text;
-
+  //sendObjectAPI.nivel2 = msg.text;
   const service = servicos.find((item) => item.category.name === msg.text);
   let options = [];
   if (service) {
+    datas[chatId].sendObjectAPI.service_id = service.id;
     const categoryId = service.category_id;
-    let professionals = {}
     try {
       const response = await axios.get(
         `${process.env.API_URL}/professional?categoryId=${categoryId}`
@@ -209,14 +226,37 @@ async function handleState2(msg, chatId) {
     professionals.map((prof) => {
       options.push([prof.name])
     });
-    stateOptions[2] = options;  // Atualiza as opções para o estado 3.
+    stateOptions[3] = options;  // Atualiza as opções para o estado 3.
     chatStates[chatId] = 3;  // Muda o estado para 3.
-    mostrarOpcoes(chatId, "Com qual barbeiro gostaria de realizar o serviço?", options);
+    mostrarOpcoes(chatId, "Certo! Com qual barbeiro gostaria de realizar o serviço?", options);
 
   }
 
 }
 
 async function handleState3(msg, chatId) {
-
+  console.log("terceiro", datas[chatId]);
+  const professional = professionals.find((prof) => prof.name === msg.text);  
+  let options = [];
+  if (professional) {
+    const professionalId = professional.id;
+    datas[chatId].professional_id =  professionalId; 
+    try {
+      const response = await axios.get(
+        `${process.env.API_URL}/schedule?available=1&userId=${professionalId}`
+      );
+      if (response.status === 200) {
+        schedules = response.data.length > 0 ? response.data : {};
+      }
+    } catch (error) {
+      errorMsg(chatId, error);
+    }
+    schedules.map((sch) => {
+      const exibicao = sch.date + " às " + sch.time
+      options.push([exibicao])
+    });
+    stateOptions[4] = options;  // Atualiza as opções para o estado 3.
+    chatStates[chatId] = 4;  // Muda o estado para 3.
+    mostrarOpcoes(chatId, "Escolha um dos horários disponíveis: ", options);
+  }
 }
