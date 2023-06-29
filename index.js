@@ -1,16 +1,132 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
+
 let chatStates = {};
-const nivel1Options = [
-  "Realizar reserva",
-  "Consultar reserva",
-  "Cancelar reserva",
-];
-let serviceOptions = {};
+let servicos = [];
 let sendObjectAPI = { nivel2: "barba", nivel3: "barbeiro2" };
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+
+// Define as opções válidas para cada estado.
+const stateOptions = {
+  1: ["Realizar reserva", "Consultar reserva", "Cancelar reserva"],
+  2: [],  // Populado dinamicamente quando o usuário escolhe "Realizar reserva".
+  3: []
+};
+
+// Define as funções de manipulação para cada estado.
+const stateHandlers = {
+  1: handleState1,
+  2: handleState2,
+  3: handleState3
+};
+
+const validaUser = async (chatId) => {
+  const resposta = {
+    exists: false,
+    data: {},
+  };
+  try {
+    const response = await axios.get(
+      `${process.env.API_URL}/client/search?chat_id=${chatId}`
+    );
+    if (response.status === 200) {
+      if (response.data.id) {
+        resposta.exists = true;
+        resposta.data = response.data;
+      }
+    }
+    return resposta;
+  } catch (error) {
+    errorMsg(chatId, error);
+  }
+};
+
+async function registerUser(msg, chatId) {
+  const name = msg.contact ? msg.contact.first_name : msg.from.first_name;
+  const phone = msg.contact ? msg.contact.phone_number : null;
+  try {
+    const response = await axios.post(`${process.env.API_URL}/client`, {
+      chat_id: chatId,
+      name: name,
+      telephone: phone,
+    });
+
+    if (response.status === 201) {
+      saudacao(chatId, name);
+    }
+  } catch (error) {
+    console.error(error);
+    bot.sendMessage(
+      chatId,
+      "Houve um erro durante o registro. Por favor, tente novamente mais tarde."
+    );
+  }
+}
+
+const saudacao = (chatId, name) => {
+  bot.sendMessage(chatId, `Olá, ${name}! Selecione a opção desejada:`, {
+    reply_markup: {
+      keyboard: [
+        ["Realizar reserva"],
+        ["Consultar reserva"],
+        ["Cancelar reserva"],
+      ],
+      one_time_keyboard: true,
+      resize_keyboard: true,
+    },
+  });
+};
+
+const mostrarOpcoes = (chatId, text, options) => {
+  bot.sendMessage(chatId, text, {
+    reply_markup: {
+      keyboard: options,
+      one_time_keyboard: true,
+      resize_keyboard: true,
+    },
+  });
+};
+
+const errorMsg = (chatId, error) => {
+  console.error(error);
+  bot.sendMessage(
+    chatId,
+    "Houve um erro durante a consulta de seu registro. Por favor, tente novamente mais tarde."
+  );
+};
+
+bot.on("message", async (msg) => {
+  if (!msg.contact && msg.text !== "/start") {
+    const chatId = msg.chat.id;
+    const userState = chatStates[chatId];
+
+    // Se o estado atual do usuário não tem um manipulador definido, registre o usuário.
+    if (!stateHandlers[userState]) {
+      const valida = await validaUser(chatId);
+      if (valida.exists) {
+        saudacao(chatId, valida.data.name);
+        chatStates[chatId] = 1;
+      } else {
+        return registerUser(msg, chatId);
+      }
+    }
+
+    // Se a mensagem não é uma opção válida para o estado atual, envie uma mensagem de erro.
+    if (!stateOptions[userState]?.flat().includes(msg.text)) {
+      return bot.sendMessage(chatId, "Opção inválida! Digite novamente");
+    }
+
+    // Se a mensagem é uma opção válida, execute o manipulador do estado.
+    return await stateHandlers[userState](msg, chatId);
+  }
+});
+
+bot.on("contact", async (msg) => {
+  const chatId = msg.chat.id;
+  registerUser(msg, chatId);
+});
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
@@ -43,165 +159,64 @@ bot.onText(/\/start/, async (msg) => {
   }
 });
 
-bot.onText(/\/stop/, (msg) => {
-  chatStates.unset(msg.chat.id);
-});
-
-bot.on("message", async (msg) => {
-  if (!msg.contact && msg.text !== "/start") {
-    const chatId = msg.chat.id;
-    const valida = await validaUser(chatId);
-    if (chatStates[chatId] === 1 && !nivel1Options.includes(msg.text)) {
-      console.log("VALIDAÇÃO 1");
-      bot.sendMessage(chatId, "Opção inválida! Digite novamente");
-    } else {
-      chatStates[chatId] = 2;
-      return;
-    }
-    if (
-      chatStates[chatId] === 2 &&
-      !serviceOptions[chatId]?.includes(msg.text)
-    ) {
-      console.log("VALIDAÇÃO 2");
-      console.log(msg.text);
-      bot.sendMessage(chatId, `Opção inválida! Digite novamente`);
-      mostrarOpcoes(
-        chatId,
-        `Selecione o serviço desejado:`,
-        serviceOptions[chatId]
-      );
-    } else if (
-      chatStates[chatId] === 2 &&
-      serviceOptions[chatId]?.includes(msg.text)
-    ) {
-      console.log("VALIDAÇÃO 3");
-      chatStates[chatId] = 3;
-      console.log[chatStates];
-      return;
-    }
-    if (valida.exists && (!chatStates[chatId] || chatStates[chatId] < 1)) {
-      console.log("VALIDAÇÃO 4");
-      saudacao(chatId, valida.data.name);
-      chatStates[chatId] = 1;
-    } else {
-      registerUser(msg, chatId);
-    }
-  }
-});
-
-bot.on("contact", async (msg) => {
-  const chatId = msg.chat.id;
-  registerUser(msg, chatId);
-});
-
-async function registerUser(msg, chatId) {
-  const name = msg.contact ? msg.contact.first_name : msg.from.first_name;
-  const phone = msg.contact ? msg.contact.phone_number : null;
-
-  try {
-    const response = await axios.post(`${process.env.API_URL}/client`, {
-      chat_id: chatId,
-      name: name,
-      telephone: phone,
-    });
-
-    if (response.status === 201) {
-      // saudacao(chatId, name);
-    }
-  } catch (error) {
-    console.error(error);
-    bot.sendMessage(
-      chatId,
-      "Houve um erro durante o registro. Por favor, tente novamente mais tarde."
-    );
+async function handleState1(msg, chatId) {
+  //console.log("", msg.text)
+  switch (msg.text) {
+    case "Realizar reserva":
+      const options = [];
+      try {
+        const response = await axios.get(`${process.env.API_URL}/service`);
+        if (response.status === 200) {
+          response.data.map((each) => {
+            servicos.push(each);
+            options.push([each.category.name]);
+          });
+        }
+        stateOptions[2] = options;  // Atualiza as opções para o estado 2.
+        chatStates[chatId] = 2;  // Muda o estado para 2.
+        mostrarOpcoes(chatId, "Selecione o serviço desejado:", options);
+      } catch (error) {
+        errorMsg(chatId, error);
+      }
+      break;
+    case "Consultar reserva":
+      bot.sendMessage(chatId, "Você escolheu Consultar reserva. Vamos processar isso.");
+      break;
+    case "Cancelar reserva":
+      bot.sendMessage(chatId, "Você escolheu Cancelar reserva. Vamos processar isso.");
+      break;
   }
 }
 
-bot.onText(/Realizar reserva/, async (msg) => {
-  const chatId = msg.chat.id;
-  const servicos = [];
-  const options = [];
-  try {
-    const response = await axios.get(`${process.env.API_URL}/service`);
-    if (response.status === 200) {
-      response.data.map((each) => {
-        servicos.push(each);
-        options.push([each.category.name]);
-      });
-    }
-    serviceOptions[chatId] = options;
-    console.log(serviceOptions);
-    mostrarOpcoes(chatId, "Selecione o serviço desejado:", options);
-  } catch (error) {
-    errorMsg(chatId, error);
-  }
-});
+async function handleState2(msg, chatId) {
+  sendObjectAPI.nivel2 = msg.text;
 
-bot.onText(/Consultar reserva/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(
-    chatId,
-    "Você escolheu Consultar reserva. Vamos processar isso."
-  );
-});
-
-bot.onText(/Cancelar reserva/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(
-    chatId,
-    "Você escolheu Cancelar reserva. Vamos processar isso."
-  );
-});
-
-const errorMsg = (chatId, error) => {
-  console.error(error);
-  bot.sendMessage(
-    chatId,
-    "Houve um erro durante a consulta de seu registro. Por favor, tente novamente mais tarde."
-  );
-};
-
-const validaUser = async (chatId) => {
-  const resposta = {
-    exists: false,
-    data: {},
-  };
-  try {
-    const response = await axios.get(
-      `${process.env.API_URL}/client/search?chat_id=${chatId}`
-    );
-    if (response.status === 200) {
-      if (response.data.id) {
-        resposta.exists = true;
-        resposta.data = response.data;
+  const service = servicos.find((item) => item.category.name === msg.text);
+  let options = [];
+  if (service) {
+    const categoryId = service.category_id;
+    let professionals = {}
+    try {
+      const response = await axios.get(
+        `${process.env.API_URL}/professional?categoryId=${categoryId}`
+      );
+      if (response.status === 200) {
+        professionals = response.data.length > 0 ? response.data : {};
       }
+    } catch (error) {
+      errorMsg(chatId, error);
     }
-    return resposta;
-  } catch (error) {
-    errorMsg(chatId, error);
+    professionals.map((prof) => {
+      options.push([prof.name])
+    });
+    stateOptions[2] = options;  // Atualiza as opções para o estado 3.
+    chatStates[chatId] = 3;  // Muda o estado para 3.
+    mostrarOpcoes(chatId, "Com qual barbeiro gostaria de realizar o serviço?", options);
+
   }
-};
 
-const saudacao = (chatId, name) => {
-  bot.sendMessage(chatId, `Olá, ${name}! Selecione a opção desejada:`, {
-    reply_markup: {
-      keyboard: [
-        ["Realizar reserva"],
-        ["Consultar reserva"],
-        ["Cancelar reserva"],
-      ],
-      one_time_keyboard: true,
-      resize_keyboard: true,
-    },
-  });
-};
+}
 
-const mostrarOpcoes = (chatId, options, text) => {
-  bot.sendMessage(chatId, text, {
-    reply_markup: {
-      keyboard: options,
-      one_time_keyboard: true,
-      resize_keyboard: true,
-    },
-  });
-};
+async function handleState3(msg, chatId) {
+
+}
