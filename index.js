@@ -18,7 +18,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
 // Define as opções válidas para cada estado.
 const stateOptions = {
-  1: ["Realizar reserva", "Consultar reserva", "Cancelar reserva"],
+  1: [["Realizar reserva"], ["Consultar reserva"]],
   2: [],  // Populado dinamicamente quando o usuário escolhe "Realizar reserva".
   3: [],
   4: []
@@ -74,14 +74,49 @@ async function registerUser(msg, chatId) {
     );
   }
 }
+const formatDate = (dateString) => {
+  const date = new Date(dateString);
+  const day = ("0" + date.getDate()).slice(-2);
+  const month = ("0" + (date.getMonth() + 1)).slice(-2);
+  const year = date.getFullYear();
+  const formattedDate = `${day}/${month}/${year}`;
+  return formattedDate;
+}
+
+const formatTime = (timeString) => {
+  const parts = timeString.split(":");
+  const formattedTime = `${parts[0]}:${parts[1]}`;
+  return formattedTime;
+}
+
+const consultaReservas = async (chatId) => {
+  const resposta = {
+    exists: false,
+    data: {},
+  };
+  const user_id = datas[chatId].sendObjectAPI.user_id;
+  try {
+    const response = await axios.get(
+      `${process.env.API_URL}/scheduling?userId=${user_id}`
+    );
+    if (response.status === 200) {
+      if (response.data.length > 0 ) {
+        resposta.exists = true;
+        resposta.data = response.data;
+      }
+    }
+    return resposta;
+  } catch (error) {
+    errorMsg(chatId, error);
+  }
+};
 
 const saudacao = (chatId, name) => {
   bot.sendMessage(chatId, `Olá, ${name}! Selecione a opção desejada:`, {
     reply_markup: {
       keyboard: [
         ["Realizar reserva"],
-        ["Consultar reserva"],
-        ["Cancelar reserva"],
+        ["Consultar reserva"]
       ],
       one_time_keyboard: true,
       resize_keyboard: true,
@@ -132,8 +167,21 @@ bot.on("message", async (msg) => {
 
     // Se a mensagem não é uma opção válida para o estado atual, envie uma mensagem de erro.
     if (!stateOptions[userState]?.flat().includes(msg.text)) {
-      return bot.sendMessage(chatId, "Opção inválida! Digite novamente");
-    }
+      const state = chatStates[chatId];
+      let msg;
+      bot.sendMessage(chatId, "Opção inválida! Selecione novamente");
+      if (state === 1) {
+        msg = "Selecione a opção desejada:";
+      } else if (state === 2) {
+        msg = "Selecione o serviço desejado:";
+      } else if (state === 3) {
+        msg = "Com qual barbeiro gostaria de realizar o serviço";
+      } else if (state === 4) {
+        msg = "Escolha um dos horários disponíveis:"
+      }
+      mostrarOpcoes(chatId, msg, stateOptions[state]);
+      return;
+    } 
 
     // Se a mensagem é uma opção válida, execute o manipulador do estado.
     return await stateHandlers[userState](msg, chatId);
@@ -203,10 +251,9 @@ async function handleState1(msg, chatId) {
       }
       break;
     case "Consultar reserva":
-      //bot.sendMessage(chatId, "Você escolheu Consultar reserva. Vamos processar isso.");
       const resposta = await consultaReservas(chatId);
       if(resposta.exists) {
-        let msg = 'Você tem os seguintes horários agendados: \n'
+        let msg = 'Você tem os seguintes horários agendados: \n\n'
         resposta.data.map((sch => {
           msg = msg + 'Dia ' + formatDate(sch.schedule.date) + ' às ' + formatTime(sch.schedule.time) + ' ' + sch.service.category.name + ' com o barbeiro ' + sch.service.professional.name + ' \n'
         }));
@@ -217,9 +264,6 @@ async function handleState1(msg, chatId) {
       }
       chatStates[chatId] = 1;
       saudacao(chatId, datas[chatId].user_name);  
-      break;
-    case "Cancelar reserva":
-      bot.sendMessage(chatId, "Você escolheu Cancelar reserva. Vamos processar isso.");
       break;
   }
 }
@@ -309,40 +353,3 @@ async function saveData(chatId) {
   saudacao(chatId, datas[chatId]?.user_name);
 
 }
-
-const formatDate = (dateString) => {
-  const date = new Date(dateString);
-  const day = ("0" + date.getDate()).slice(-2);
-  const month = ("0" + (date.getMonth() + 1)).slice(-2);
-  const year = date.getFullYear();
-  const formattedDate = `${day}/${month}/${year}`;
-  return formattedDate;
-}
-
-const formatTime = (timeString) => {
-  const parts = timeString.split(":");
-  const formattedTime = `${parts[0]}:${parts[1]}`;
-  return formattedTime;
-}
-
-const consultaReservas = async (chatId) => {
-  const resposta = {
-    exists: false,
-    data: {},
-  };
-  const user_id = datas[chatId].sendObjectAPI.user_id;
-  try {
-    const response = await axios.get(
-      `${process.env.API_URL}/scheduling?userId=${user_id}`
-    );
-    if (response.status === 200) {
-      if (response.data.length > 0 ) {
-        resposta.exists = true;
-        resposta.data = response.data;
-      }
-    }
-    return resposta;
-  } catch (error) {
-    errorMsg(chatId, error);
-  }
-};
